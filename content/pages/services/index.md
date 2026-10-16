@@ -6,25 +6,50 @@ path = "services"
 
 I'm available for contract engineering work, hourly or project-based, remote or on-site in Southern California.
 
-## Firmware
+## Board bring-up and firmware
 
-Embedded firmware in Rust (Embassy) and C on nRF, STM32, ESP32, and other microcontrollers: bring-up of new boards, drivers, low-power design, USB, BLE, and bootloaders.
+You have new hardware and need it running. I take unfamiliar boards from first power-on to a full-featured system, on bare metal, an RTOS (FreeRTOS), or embedded Linux.
 
-## PCB design and review
+- C, C++, and Rust (including bare-metal embedded Rust)
+- ARM Cortex-M and Cortex-A, STM32, AVR, i.MX6
+- Peripherals: ADC, DMA, timers, flash, USB, Ethernet, eMMC, PMICs, sensors over I2C, SPI, and UART
+- Debugging with JTAG/SWD, GDB, logic analyzers, and oscilloscopes
 
-Schematic and layout design, or a second set of eyes on your board before you send it to fab.
+## Embedded Linux
 
-## EMC pre-compliance and debugging
+Yocto images, U-Boot, kernel drivers, and device trees for custom boards, plus the userspace services that run on them.
 
-Getting your product through EMC testing: pre-compliance measurements, finding the source of emissions, and fixing failures.
+## Secure boot and OTA updates
 
-## Battery and charging systems
+Shipping firmware updates in the field without bricking or exposing your device: secure boot chains, image signing and authenticity checks, DFU bootloaders, and the cloud and desktop tools that deliver the update. I've built OTA updates end to end for a car ECU and a robotics product, and a four-stage secure boot chain for access control equipment.
 
-Battery charging, USB-PD and fast-charge protocols, power budgets, and measuring what your device actually draws.
+## EMC compliance problems
+
+Your product is failing EMC testing and the schedule is slipping. I've solved EMC compliance issues under deadline pressure.
+
+## Vehicle networks
+
+CAN, automotive Ethernet, and IEBus/AVC-LAN: ECU firmware, dashboard backends, and talking to existing vehicle systems.
+
+## Control and sensor algorithms
+
+Motor control and power-assist algorithms, slip detection and safety logic, and real-time sensor fusion, with Python tooling to characterize and visualize how well they work.
+
+## Test automation
+
+Hardware-in-the-loop testing, test servers that drive hardware over an API, and CI pipelines (GitLab, Jenkins) that deploy firmware and run tests on real devices.
+
+## Embedded GUIs
+
+Touchscreen and dashboard interfaces in C++ with Qt/QML, and 3D visualization with OpenGL and GLSL.
+
+## Medical devices
+
+Software for regulated medical devices, working within ISO 13485, IEC 60601, and FDA requirements.
 
 ## Reverse engineering
 
-Understanding undocumented hardware, firmware, and protocols. See [the TC66C write-up](@/blog/tc66-custom-firmware/index.md) for an example.
+Understanding undocumented hardware, firmware, and protocols. See [the TC66C write-up](@/blog/tc66-custom-firmware/index.md) and [the Techstream / Mini-VCI write-up](@/blog/rmvci/index.md) for examples.
 
 ## Get in touch
 
