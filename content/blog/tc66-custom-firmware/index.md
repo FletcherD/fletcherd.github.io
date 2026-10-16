@@ -2,6 +2,7 @@
 title = "Reverse-engineering a $30 USB power meter, and writing it a new brain"
 description = "How I went from \"why won't this meter do what I want over USB\" to a from-scratch replacement firmware that triggers USB-PD, QuickCharge, and Samsung AFC on command."
 date = 2026-09-21
+updated = 2026-10-16
 
 [taxonomies]
 tags = ["reverse engineering", "Rust", "firmware", "USB-PD", "hardware"]
@@ -22,7 +23,7 @@ It is not. And chasing *why not* took me through essentially every layer of the 
 
 **The firmware is open source (MIT): [github.com/FletcherD/tc66-custom-fw](https://github.com/FletcherD/tc66-custom-fw)** — prebuilt releases, a one-command flashing tool, and a path back to stock.
 
-A note on the timeline before we start: this happened fast and dense — roughly **August 15–26, 2026**. The reverse-engineering and the attacks on the chip filled the first week; the from-scratch firmware then landed in a burst (13 commits one day, 20 the next, 32 the day after that). I've kept things chronological, but a few threads ran in parallel and I'll flag it when they did.
+A note on the timeline before we start: this happened fast and dense — roughly **August 15–26, 2026**. The reverse-engineering and the attacks on the chip filled the first week; the from-scratch firmware then landed in a burst (13 commits one day, 20 the next, 32 the day after that). I've kept things chronological, but a few threads ran in parallel and I'll flag it when they did. The firmware kept growing afterwards, in shorter bursts through September and mid-October; where that later work belongs to a topic below, it's folded into that topic's section.
 
 ---
 
@@ -192,11 +193,11 @@ The output of all this — the pin map — is what fed the firmware:
 |---|---|
 | USB D+ soft-connect | PA9 (also the backlight enable — this dual use bit me later) |
 | I²C0 (INA226 0x4A, EEPROM 0x50, FUSB302 0x22) | SCL=PB6, SDA=PB7 |
-| On-chip ADC | ch1=PA1 NTC, ch8=PB0 D+, ch9=PB1 D− |
+| On-chip ADC | ch0=PA0 NTC, ch1=PA1 D+, ch9=PB1 D− |
 | TFT (ST7735S over SPI0) | SCK=PA5, MOSI=PA7, DC=PA4, RST=PA3; backlight PWM on PB3 |
 | Buttons | K1=PF0 (bootloader), K2=PF1 (factory reset) |
 | Charge trigger (D+/D− drive) | D+ via PA13/PA14, D− via PB4/PB5 |
-| BLE module | USART on PA2 (TX) |
+| BLE module | USART1: TX=PA2, RX=PB0 |
 
 I also mined the stock firmware for the *behaviour* behind those pins: the INA226 is used as a raw ΔΣ ADC (config `0x41A7`, no on-chip calibration) with all averaging and calibration done in software from per-unit constants in the EEPROM; the NTC is a 10 kΩ / β=3450 thermistor on the bottom of an 11.5 kΩ divider; the EEPROM's 32 KB is fully mapped (a wear-levelled energy ring at 0x0000, calibration at 0x2000/0x2200, the datalogger ring at 0x2400); and the display init sequence, gamma tables, and memory offsets were all recoverable verbatim. This is the reference that made a clean-room firmware *possible* rather than a guessing game.
 
@@ -222,7 +223,7 @@ At this point I could measure, patch, and reflash the meter at will. But patchin
 
 ## Act VI — A new brain: the from-scratch firmware
 
-The custom firmware is written in Rust (`no_std`), flashes into the 52 KB app slot, and keeps the stock bootloader so recovery always works. It's wire-compatible — it enumerates as the same USB device and answers the stock commands — but everything underneath is mine and fully understood. I labelled milestones M0 through M4. They landed over three days.
+The custom firmware is written in Rust (`no_std`), flashes into the 52 KB app slot, and keeps the stock bootloader so recovery always works. It's wire-compatible — it enumerates as the same USB device and answers the stock commands — but everything underneath is mine and fully understood. I labelled milestones M0 through M4. The core of them landed over three days; the persistence, the extra screens, and the Bluetooth link were finished in later sessions.
 
 ### M0 — self-hosting
 
@@ -245,15 +246,20 @@ I brought up each peripheral behind a host-triggered "dev verb" first — nothin
 
 The I²C bus scan found the INA226 (confirmed genuine via its manufacturer-ID `0x5449` = "TI" and die-ID `0x2260`) and the EEPROM. I dumped the whole 32 KB EEPROM twice (identical hashes) before ever contemplating a write, as a permanent calibration backup. Then I implemented the calibration model recovered from the stock firmware — integer, multiply-before-divide, with the per-unit gain/offset/zero-reference constants read from the EEPROM — and reproduced a known voltage (5.2084 V) *exactly* against the raw registers. The `getva` builder embeds a known-good decrypted template, patches the live fields at their offsets, recomputes the three per-block CRC16 checksums, and AES-encrypts. Existing host tools couldn't tell it from a real meter.
 
-The on-chip ADC (for temperature and D±) had a great gotcha: its clock comes from a dedicated 14 MHz oscillator that's *off at reset*, and the ADC's self-calibration hangs forever without it. The staged dev verb caught this cleanly (it returned "stage 4: oscillator never stabilised"). I identified the ADC channels empirically — D+ and D− gave themselves away by reading the USB idle J-state signature (3.30 V / 0.00 V) — and found that the NTC on *my* unit sits on channel 1, though the stock firmware reads channel 3 on the hardware revision it targets. My first temperature model (a fitted one) reported an impossible 11.6 °C on a cool board; adopting the stock β-model instead gave a sane 25 °C. Details matter.
+The on-chip ADC (for temperature and D±) had a great gotcha: its clock comes from a dedicated 14 MHz oscillator that's *off at reset*, and the ADC's self-calibration hangs forever without it. The staged dev verb caught this cleanly (it returned "stage 4: oscillator never stabilised"). My first pass at the ADC channel map was empirical, and partly wrong: the stock code reads its three analog inputs as "inserted-group ranks" 1/2/3, and I'd mistaken those rank indices for channel numbers. Going back to the stock ADC init settled it — **ch0 (PA0) is the NTC, ch1 (PA1) is D+, ch9 (PB1) is D−** — and the pin I'd been reading as D+ (PB0) turned out to be the Bluetooth module's UART output, idling at 3.3 V. One board design, one channel map. My first temperature model (a fitted one) reported an impossible 11.6 °C on a cool board; adopting the stock β-model gave a sane 27 °C, and it now runs in integer fixed point, proven bit-identical to the stock floating-point formula over every possible input by an exhaustive host-side test. Details matter.
 
-### M1.5 / M3 — streaming, a display, and an architecture
+### M1.5 / M2 / M3 — streaming, a display, persistence, and an architecture
 
 A dense middle stretch:
 
+- A **hardware-paced sampler**: a timer interrupt reads the INA226, so measurements no longer depend on how fast (or whether) a host polls. It started at 250 Hz; it now ticks every 2.24 ms and reads both the shunt and bus voltage on each tick, which catches about **98% of the conversions the INA226 actually makes**. The averaging window and the screen refresh rate are settings, and the energy counters integrate every sample.
+
 - A plaintext **`rawva`** streaming verb with a window sequence number, because a full encrypted `getva` costs ~20 ms of software AES — the entire reply budget — while `rawva` is microseconds. It streams at 700 polls/second with zero missed sampler windows.
-- The device became a **composite USB device that emulates a ChargerLAB POWER-Z KM003C** on a vendor interface, so the mainline Linux `powerz` hwmon driver binds it and `sensors` just works. This is actually the *priority* protocol now; the stock TC66 CDC commands ride along for compatibility.
+- The device became a **composite USB device that emulates a ChargerLAB POWER-Z KM003C** on a vendor interface, so the mainline Linux `powerz` hwmon driver binds it and `sensors` just works. This is actually the *priority* protocol now; the stock TC66 CDC commands ride along for compatibility. It goes well past what `powerz` needs: the KM003C's **graph mode** streams at 2, 10, 50, or **1000 samples per second**, and the open-source [km003c-rs](https://github.com/okhsunrog/km003c-rs) CLI and GUI work against it unmodified — live V/I plots with the PD traffic in the same timeline.
 - The **ST7735S display**, driven by a non-blocking DMA pixel engine (16-bit SPI frames on a DMA channel, pumped from the main loop so it never blocks USB or the sampler), with a 1-bpp font generated from Inconsolata Bold and a three-line V/I/P screen. The first frame draws *before* USB enumeration, so the screen is live from power-on. An overnight incident — a static screen caused real LCD image persistence — drove a 15-second screen-off timeout, with the wake condition later refined from "no input" to "no *change* in input" (a steady load parked on the port is as static as no load).
+- **Six screens**, stepped with K1: V/A/W, energy and run time, temperature and D±, a full-screen scrolling V/I plot, a USB-PD info screen, and a charger-detection screen (both in Act VII). The plot uses the ST7735S's *hardware* vertical scroll, so each new sample costs one column of pixels rather than a redraw. Holding K2 resets the energy counters.
+- **Persistence (M2)** in the stock firmware's own EEPROM layout: settings, the wear-levelled energy ring, and the datalogger that `gtrec` reads, so switching between stock and custom firmware keeps them. All writes go through one driver that verifies every page and hard-refuses the factory calibration words.
+- A hardware **watchdog** (~13 s), fed once per main-loop pass and inside the self-flasher.
 
 And underneath it all, the architecture had to change from "poll everything in one loop" to interrupt-driven, which is where the chip fought back hardest.
 
@@ -263,19 +269,19 @@ I keep a file called `QUIRKS.md` of measured, reproducible GD32F150 misbehaviour
 
 - **NAK traffic stalls the CPU's own peripheral accesses by 1–5 ms each.** While the USB host is NAK-polling any endpoint, reads of unrelated peripheral registers wait-state for *milliseconds*. I proved it by bracketing ~300 instructions with timer timestamps and measuring 1.1 ms — while a register-only busy loop in the same function ran at normal speed. The polled main loop collapsed to ~70 iterations/second under a NAK storm, self-sustaining because a slow loop keeps the endpoint unserviced. On genuine STM32 silicon the hardware handles NAKs for free. The fix was structural: pre-armed replies (no steady-state NAK storms), a core-internal timebase that can't stall, and moving USB service into the interrupt.
 - **USB completion events get lost, and reading the status register at ISR entry actually *consumes* events.** An A/B test was unambiguous: with the status-register read present, 0 of 401 replies produced a completion callback; delete that read and it's 50%. The chip's manual, unlike ST's, never promises the level-triggered guarantee I was relying on. The stock firmware's own answer — a drain loop that re-checks per-endpoint flags rather than the global status register — is what I ended up mirroring.
-- **The GD32F150 only fetches zero-wait from the first 32 KB of flash;** above that, every instruction fetch is ~10× slower. My linker had put the entire AES implementation above the boundary. A linker script (`fast.x`) that pins the hot path — interrupts, USB, AES, main loop — below 32 KB took `getva` from **48.6 ms to 2.3 ms**, and incidentally explained away most of the confounds in the two quirks above. To find *what* to pin, I built a poor-man's PC profiler: the chip's debug cycle counter is a non-functional stub, so I sample the interrupted program counter off the exception stack frame at 250 Hz into an SRAM ring and dump it over serial.
+- **The GD32F150 only fetches zero-wait from the first 32 KB of flash;** above that, every instruction fetch is ~10× slower. My linker had put the entire AES implementation above the boundary. A linker script (`fast.x`) that pins the hot path — interrupts, USB, AES, main loop — below 32 KB took `getva` from **48.6 ms to 2.3 ms**, and incidentally explained away most of the confounds in the two quirks above. To find *what* to pin, I built a poor-man's PC profiler: the chip's debug cycle counter is a non-functional stub, so I sample the interrupted program counter off the exception stack frame on every sampler tick into an SRAM ring and dump it over serial.
 
 There's also a permanent debug reality behind all of it, imposed by RDP2: SWD `halt`/`reset`/`step` lock the core, and even a background memory read can leave it halted, so `probe-rs`/RTT/`defmt` are all unusable. My entire debug channel is the SRAM marker map plus the dev verbs, and liveness is confirmed over serial with no debugger attached. Debugging embedded code with essentially `printf`-to-SRAM and a multimeter is a throwback, but it works.
 
 ### The stack-gate
 
-One more safety mechanism, because it embodies the central fear of this whole project. A stack overflow *on the boot path* hardfaults **before** the D+ pull-up — producing an invisible dead board that needs physical K1 recovery. That shipped once, as build 35, and it's a miserable way to find out. So every build runs a `stack_gate.py` that computes a conservative worst-case stack depth from the disassembled call graph — discovering every interrupt handler from the vector table, charging the deepest handler chain, treating recursion as a hard error — and checks it against the RAM budget. When the budget got tight, the release valve was a `.hibss` section that parks large statics (the AES key schedule, a PD-capture ring) in the 1 KB of RAM above the stack fence, which raises the budget byte-for-byte. Switching to size-optimised builds with fat LTO later dropped the flash from ~49.5 KB to ~35.6 KB and gave real headroom back.
+One more safety mechanism, because it embodies the central fear of this whole project. A stack overflow *on the boot path* hardfaults **before** the D+ pull-up — producing an invisible dead board that needs physical K1 recovery. That shipped once, as build 35, and it's a miserable way to find out. So every build runs a `stack_gate.py` that computes a conservative worst-case stack depth from the disassembled call graph — discovering every interrupt handler from the vector table, charging the deepest handler chain, treating recursion as a hard error — and checks it against the RAM budget. When the budget got tight, the release valve was a `.hibss` section that parks large statics (the AES key schedule, a PD-capture ring) in the 1 KB of RAM above the stack fence, which raises the budget byte-for-byte. Switching to size-optimised builds with fat LTO later dropped the flash from ~49.5 KB to ~35.6 KB and gave real headroom back — which the later features have since used up. The flash is full again (about 150 bytes spare in the release build); the last big savings came from replacing the AES crate with a compact hand-written AES-256 (−4.3 KB, and `getva` got three times faster) and dropping linker thunks and floating-point math. The rule for the next feature: room gets made on purpose, never by quietly changing code that already works.
 
 ---
 
 ## Act VII — The crown jewels: making it do the thing I came for
 
-Everything so far was infrastructure. This is the payoff — exposing over USB the fast-charge triggers the stock unit keeps locked behind its buttons. It all landed in one intense day (the M4 milestone), building on the FUSB302 PD PHY, the D+/D− drive GPIOs, and the pin map from the teardown. Every one of these was verified against real chargers on the bench.
+Everything so far was infrastructure. This is the payoff — exposing over USB the fast-charge triggers the stock unit keeps locked behind its buttons. The triggers landed in one intense day (the M4 milestone), with the PD sniffer and charger detection following in October, all building on the FUSB302 PD PHY, the D+/D− drive GPIOs, and the pin map from the teardown. Every one of these was verified against real chargers on the bench.
 
 ### USB-PD sink and PPS
 
@@ -286,6 +292,14 @@ It worked, eventually, against an Apple 96 W charger at 5/9/15/20 V — after tw
 PD 3.0 and PPS (the fine-grained adjustable voltage mode) came next, with a rule learned on the bench: lead with revision 2.0 and only upgrade to 3.0 after the source declares 3.0 in its capabilities, because a 3.0-stamped reply to a 2.0 message made the Apple charger reset the link. PPS needs a keepalive (re-request within ~10 s or the contract dies), so the engine re-sends the standing request every 8 s. Verified: PPS fine-stepping across 3.3 / 5 / 9 / 11 V, each tracked within ~50 mV on the meter's own sampler, and a 9 V PPS contract held steady for 24 seconds — past the deadline, confirming the keepalive.
 
 I also exposed the CC-pin voltages (via a binary search on the FUSB302's built-in comparator) and re-exported every PD message the meter sends or receives — in the real KM003C wire format — over the POWER-Z vendor endpoint, so a KM003C protocol tool can watch the meter's own live PD traffic. That last feature was gated not by protocol difficulty but by 336 bytes of RAM, which is what forced the `.hibss` high-RAM statics into existence.
+
+### Listening in: a PD sniffer
+
+The FUSB302 can also listen without taking part. In sniffer mode the meter stops presenting itself as a sink and records whatever a charger and a device say to each other *through* it: source capabilities, requests, vendor messages, the **cable's e-marker** answering on SOP′/SOP″, attaches and detaches, hard resets, and even packets that fail their CRC. It works in either plug orientation and can make the pair renegotiate without replugging. The capture goes out in the same KM003C PD format, and a host tool (`pdcap.py`) decodes every message type field by field, using layouts taken from the USB PD R3.2 spec. The PD info screen shows the same thing on the meter itself.
+
+Two bench lessons. First, the FUSB302's BMC slicer threshold matters: at the default, one VDM in every capture went missing, and nudging the threshold brought it back. Second, *my unit has a board fault*: the OUT port's CC2 contact is nearly open, so sink attach and hard reset only work with the line on CC1. Both CC nodes are unloaded at DC and no GPIO or ADC pin touches CC, so there's nothing firmware can do about it.
+
+The sink side learned the same trick. At attach it listens to the source probing the cable's e-marker, and it can ask a PD 3.x source for its extended capabilities, status, and identity.
 
 ### QuickCharge 2.0 and 3.0
 
@@ -302,31 +316,38 @@ Samsung's Adaptive Fast Charging is a single-wire serial protocol on D−. I imp
 3. So I went looking outside my byte framing, added an open-drain acknowledgement bracket around each byte — still nothing.
 4. Then a fresh scope capture of the *stock* TC66's output convinced me the encoding was **pulse-width, not NRZ** — and I set out to rebuild the whole engine. This felt like the breakthrough. **It was a wrong turn.** A better, higher-sample-rate capture reversed it: the encoding *is* NRZ, exactly as I'd had it since step 2; the "pulse-width" reading was an artifact of undersampling and the earlier probe problems.
 
-The thing that actually made it work was never the encoding at all. It was three things: the protocol is **closed-loop** (the master drives a "ping," then *reads the pin back* to follow the charger's response ping before each byte — an open-loop replay engages the charger but never completes the handshake); the entry sequence releases the lines to high-impedance and lets the charger *source* the D− level rather than driving it; and the bit timing has to run with interrupts masked so the 250 Hz sampler doesn't stretch a bit cell mid-byte. With all three, `afctr` drives a real Samsung charger from 5 V to a measured 8.92 V, reliably across power-cycles. The D+/D− drive hardware had been provably correct the entire time (QuickCharge used the same pins) — which is *exactly* why the encoding looked like the culprit for so long when the real gap was the handshake protocol.
+The thing that actually made it work was never the encoding at all. It was three things: the protocol is **closed-loop** (the master drives a "ping," then *reads the pin back* to follow the charger's response ping before each byte — an open-loop replay engages the charger but never completes the handshake); the entry sequence releases the lines to high-impedance and lets the charger *source* the D− level rather than driving it; and the bit timing has to run with interrupts masked so the sampler interrupt doesn't stretch a bit cell mid-byte. With all three, `afctr` drives a real Samsung charger from 5 V to a measured 8.92 V, reliably across power-cycles. The D+/D− drive hardware had been provably correct the entire time (QuickCharge used the same pins) — which is *exactly* why the encoding looked like the culprit for so long when the real gap was the handshake protocol.
 
 The lesson I took: when the low-level output is provably correct and it still doesn't work, stop re-examining the low level. The bug is in the protocol *state*, not the bits.
 
-### Huawei FCP/SCP, and BLE
+### Huawei FCP/SCP
 
 Huawei's FCP and SCP ride the same physical layer as AFC, so they were scaffolding on the same engine — multi-byte register packets with a Huawei-specific CRC-8 (verified bit-exact against all my reverse-engineered examples) and three leading sync pings. But I have **no Huawei charger on the bench**, so these are explicitly *untested*, with three load-bearing assumptions marked in the code (most critically, whether the parity bit is per-byte or runs across the whole packet). Shipping untested code labelled as untested, with the specific unknowns called out, is the honest thing to do — but it's not "done."
 
-Finally, the BLE link: I reimplemented the stock transport for the on-board BT24 module over its UART, using a DMA ring for receive (zero interrupts — I hold a strict two-interrupt budget: only USB and the sampler) and polled transmit. I recovered from the stock firmware that the module is on USART1 with TX on PA2, RX on PB0 (the old notes said USART0 — wrong), pre-provisioned to 115200 baud. It's coded and designed but **doesn't fit yet** — it overflows the 52 KB flash region by about 740 bytes. It's the one M4-era feature that hasn't reached hardware, pending a size cut.
+### Charger detection, on the device
+
+The detection screen answers "what does this charger support?" without ever raising the voltage: **it never goes above 5 V**. One K2 press reads the Type-C current advertisement, checks for Apple/Samsung D± dividers, probes QuickCharge and AFC, and lists every PD offer. It runs as a state machine stepped from the main loop, so USB stays responsive while it works, and it refuses to start if something is plugged into the other port, because a probe that accidentally raised the voltage must never reach a device.
+
+### BLE
+
+Finally, the BLE link: I reimplemented the stock transport for the on-board BT24 module over its UART, with DMA for both receive (a ring) and transmit, so it costs zero interrupts — I hold a strict two-interrupt budget: only USB and the sampler. I recovered from the stock firmware that the module is on USART1 with TX on PA2, RX on PB0 (the old notes said USART0 — wrong). The bench corrected the other half of my notes: the stock firmware never provisions this unit's module, so it runs at its power-on default of **9600 baud**. The module answers every AT *query* but rejects every persistent write with `ERROR=104`, so there's no changing it. The stock `b`-prefixed verbs are always on, so the vendor's Bluetooth protocol works as it did on stock.
 
 ---
 
 ## What it adds up to
 
-Eleven days, one $30 meter, and it now does everything I originally wanted and a lot I didn't know I wanted:
+Eleven days to get here, a few more bursts to finish it, one $30 meter, and it now does everything I originally wanted and a lot I didn't know I wanted:
 
 - I understand its wire protocol completely, including the ways it's stranger than documented.
 - I recovered its firmware encryption key — not by the sophisticated attack I spent five days on, but by noticing the plaintext had to pass through unprotected SRAM.
 - I have a full Ghidra map of both the app and the bootloader, and a verified toolchain to patch and reflash them.
 - I have a to-scale KiCad reconstruction of the PCB and a confirmed pin map.
-- And I have a from-scratch Rust firmware that measures with a hardware-paced sampler (no more "faster is slower"), emulates a POWER-Z so the mainline Linux driver just works, drives the display, self-flashes over USB with no button, and — the thing that started it all — **triggers USB-PD, PPS, QuickCharge 2.0/3.0, and Samsung AFC on command**, all bench-verified against real chargers.
+- And I have a from-scratch Rust firmware that measures with a hardware-paced sampler (no more "faster is slower"), emulates a POWER-Z well enough for the mainline Linux driver and 1000-sample/s streaming tools, sniffs and decodes USB-PD conversations, identifies chargers on its own screen, talks Bluetooth, drives the display, self-flashes over USB with no button, and — the thing that started it all — **triggers USB-PD, PPS, QuickCharge 2.0/3.0, and Samsung AFC on command**, all bench-verified against real chargers.
+- And it's public: the repo has CI that builds and runs every safety gate on each push, and each release is a single encrypted image in the bootloader's own format plus a standalone flashing script, `tc66flash.py`.
 
 A few things I'll carry forward. First, the cheapest win in the whole project was a *reframe* (SRAM, not flash), and it beat a week of signal processing pointed slightly wrong — the CPA campaign was aimed at AES-128 with a broken oracle and could never have succeeded, which I only learned once I'd won by other means. Second, "the low-level output is provably correct and it still doesn't work" almost always means the bug is one layer *up* — the AFC handshake, not the AFC bits. Third, on a locked, hard-to-debug chip where a boot-path fault means physical recovery, the boring safety infrastructure — the build-time gates, the recovery path that can't be bricked, the dev-verb-first bring-up — isn't overhead. It's the only reason the fun parts were ever affordable to attempt.
 
-Recovery, incidentally, still always works. The bootloader is never touched by any flash. Hold K1, reflash stock, and it's a boring, perfect little power meter again — until the next idea.
+Recovery, incidentally, still always works. The bootloader is never touched by any flash. Hold K1, reflash stock (`tc66flash.py stock` downloads RuiDeng's own V1.18 from their server, so I never redistribute it), and it's a boring, perfect little power meter again — until the next idea.
 
 ---
 
