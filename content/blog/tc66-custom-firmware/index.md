@@ -20,6 +20,8 @@ Then I wanted to do something slightly more ambitious — I wanted to *script* i
 
 It is not. And chasing *why not* took me through essentially every layer of the device — its host software, its wire protocol, its encrypted firmware, the readout-protected chip that firmware runs on, the physical PCB under a microscope, and finally a complete clean-room replacement firmware written in Rust. This is the whole story, dead ends included. Especially the dead ends.
 
+**The firmware is open source (MIT): [github.com/FletcherD/tc66-custom-fw](https://github.com/FletcherD/tc66-custom-fw)** — prebuilt releases, a one-command flashing tool, and a path back to stock.
+
 A note on the timeline before we start: this happened fast and dense — roughly **August 15–26, 2026**. The reverse-engineering and the attacks on the chip filled the first week; the from-scratch firmware then landed in a burst (13 commits one day, 20 the next, 32 the day after that). I've kept things chronological, but a few threads ran in parallel and I'll flag it when they did.
 
 ---
@@ -328,4 +330,4 @@ Recovery, incidentally, still always works. The bootloader is never touched by a
 
 ---
 
-*Everything here was done on hardware I own, against my own devices. The firmware images, vendor apps, and datasheets aren't redistributed. Tooling, findings, and the custom firmware live in my two project repos.*
+*Everything here was done on hardware I own, against my own devices. The firmware images, vendor apps, and datasheets aren't redistributed. The custom firmware, its host tools, and its documentation are at [github.com/FletcherD/tc66-custom-fw](https://github.com/FletcherD/tc66-custom-fw).*
