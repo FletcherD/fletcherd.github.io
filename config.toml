@@ -1,0 +1,50 @@
+base_url = "https://fletcher.cool"
+title = "fletcher.cool"
+description = "Embedded systems engineer: firmware, hardware, and reverse engineering."
+author = "Fletcher"
+theme = "tabi"
+generate_feeds = true
+compile_sass = true
+minify_html = true
+build_search_index = true
+default_language = "en"
+taxonomies = [{ name = "tags", feed = true }]
+
+[search]
+index_format = "elasticlunr_json"
+
+[markdown]
+bottom_footnotes = true
+smart_punctuation = true
+external_links_class = "external"
+github_alerts = true
+
+[markdown.highlighting]
+theme = "catppuccin-frappe"
+style = "class"
+
+[extra]
+theme_switcher = true
+remote_repository_url = "https://github.com/FletcherD/fletcherd.github.io"
+show_remote_changes = false
+show_remote_source = false
+copy_button = true
+show_reading_time = true
+show_date = true
+toc = false
+quick_navigation_buttons = true
+favicon_emoji = "⚡"
+menu = [
+    { name = "services", url = "services", trailing_slash = true },
+    { name = "blog", url = "blog", trailing_slash = true },
+    { name = "projects", url = "projects", trailing_slash = true },
+    { name = "about", url = "about", trailing_slash = true },
+]
+feed_icon = true
+socials = [
+    { name = "github", url = "https://github.com/FletcherD/", icon = "github" },
+]
+footer_menu = [
+    { url = "sitemap.xml", name = "sitemap", trailing_slash = false },
+]
+enable_csp = true
