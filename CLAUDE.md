@@ -18,7 +18,8 @@ The tabi demo content in `themes/tabi/content/` doubles as documentation, e.g. `
 
 - tabi requires `[markdown.highlighting] style = "class"`.
 - CSP is enabled (`enable_csp`), so inline scripts and external embeds are blocked unless their domains are added to `extra.allowed_domains`. `zola serve` injects an inline livereload script that the CSP blocks; this shows a console error in dev only and is harmless.
-- Comments are not enabled yet. tabi supports giscus via `[extra.giscus]` (see the theme config).
+- Comments: giscus (GitHub Discussions on this repo, category "Announcements", mapped by pathname), configured in `[extra.giscus]` and on for every post (`enabled_for_all_posts`). Disable on one post with `giscus = false` under `[extra]`. Needs the giscus GitHub App installed on the repo and Discussions enabled. `extra.allowed_domains` is set explicitly (tabi's defaults plus `https://giscus.app` in style-src, for giscus's `default.css`); tabi adds giscus.app to script-src/frame-src itself.
+- A Remark42 server was tried and is stopped: its files and data remain in `/home/pi/remark42/` on the Pi (pi@192.168.1.100), with a runbook in its README. Local branch `remark42-comments` has the matching site templates.
 
 ## Build and deploy
 

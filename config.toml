@@ -47,4 +47,28 @@ socials = [
 footer_menu = [
     { url = "sitemap.xml", name = "sitemap", trailing_slash = false },
 ]
+allowed_domains = [
+    { directive = "font-src", domains = ["'self'", "data:"] },
+    { directive = "img-src", domains = ["'self'", "https://*", "data:"] },
+    { directive = "media-src", domains = ["'self'", "https://cdn.jsdelivr.net/"] },
+    { directive = "script-src", domains = ["'self'"] },
+    { directive = "style-src", domains = ["'self'", "https://giscus.app"] },
+    { directive = "frame-src", domains = ["player.vimeo.com", "https://www.youtube-nocookie.com"] },
+]
 enable_csp = true
+
+[extra.giscus]
+enabled_for_all_posts = true
+automatic_loading = true
+repo = "FletcherD/fletcherd.github.io"
+repo_id = "R_kgDOOSDbFg"
+category = "Announcements"
+category_id = "DIC_kwDOOSDbFs4DIw0U"
+mapping = "pathname"
+strict_title_matching = 1
+enable_reactions = 1
+comment_box_above_comments = false
+light_theme = "noborder_light"
+dark_theme = "noborder_dark"
+lang = ""
+lazy_loading = true
